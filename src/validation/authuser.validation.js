@@ -5,11 +5,26 @@ const registerauthuser = {
   body: Joi.object().keys({
     email: Joi.string().required().trim().email(),
     password: Joi.string().min(6).max(10).required(),
-    role: Joi.string().required().trim(),
+    role: Joi.string().valid("user", "admin").default("user"),
   }),
 };
 
-//-----loginauthuser----
+//-----OTP----
+const verifyotp = {
+  body: Joi.object().keys({
+    email: Joi.string().required().trim().email(),
+    otp: Joi.string().required().trim(),
+  }),
+};
+
+const resendotp = {
+  body: Joi.object().keys({
+    email: Joi.string().required().trim().email(),
+    // password: Joi.string().min(6).max(10).required().trim(),
+  }),
+};
+
+//----login----
 const loginauthuser = {
   body: Joi.object().keys({
     email: Joi.string().required().trim().email(),
@@ -27,6 +42,8 @@ const updateprofile = {
 
 module.exports = {
   registerauthuser,
+  verifyotp,
+  resendotp,
   loginauthuser,
   updateprofile,
 };

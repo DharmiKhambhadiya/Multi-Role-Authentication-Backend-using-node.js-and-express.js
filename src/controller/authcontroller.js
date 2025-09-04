@@ -1,105 +1,182 @@
-const { User } = require("../model/user");
+const User = require("../model/user");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { verifyOTPAndCreateUser } = require("../services/otpservices");
+const {
+  registerPendingUser,
+  resendOTPForPendingUser,
+} = require("../services/userservices");
+
+const { Validateregister } = require("../services/validateregister");
+
+//  to generate JWT
+const generateToken = (user) => {
+  return jwt.sign(
+    { userid: user._id, email: user.email, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+};
 
 //--------registration-------
 exports.register = async (req, res) => {
+  const { email, password, role = "user" } = req.body;
   try {
-    const { email, password, role = "user" } = req.body;
-    console.log(req.body);
+    await registerPendingUser({ email, password, role });
+    const validateregister = await Validateregister(req, res);
 
-    const user = await User.findOne({ email });
-    if (user) {
-      console.log("user already exists");
-      res.status(400).json({ success: false, message: "user already exists" });
+    if (validateregister !== undefined && validateregister !== null) {
+      return res.status(201).json({
+        success: true,
+        message: "OTP sent to email for verification",
+        data: null,
+      });
     }
 
-    const hashpassword = await bcrypt.hash(password, 12);
-    const newUser = await User.create({
-      email,
-      password: hashpassword,
-      role,
+    return res.status(200).json({
+      success: false,
+      message: "Validation failed",
+      data: null,
     });
+  } catch (err) {
+    console.error("Register Error:", err);
+    res.status(500).json({ success: false, message: err.message, data: null });
+  }
+};
+
+// --- Verify OTP (User/Admin)
+exports.verifyOTP = async (req, res) => {
+  const { email, otp, role = "user" } = req.body;
+
+  try {
+    const user = await verifyOTPAndCreateUser({ email, otp, role });
+
     res.status(200).json({
       success: true,
-      data: user,
-      message: "Registered Successfully",
-      data: newUser,
+      message: "Email verified successfully",
+      data: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+      },
     });
-  } catch (error) {
-    console.log("server error", error);
-    res.status(500).json({ success: false, message: "Failed Registration" });
+  } catch (err) {
+    console.error("Verify OTP Error:", err);
+    res.status(500).json({ success: false, message: err.message, data: null });
+  }
+};
+
+//-----resend otp---
+exports.resendOTP = async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    await resendOTPForPendingUser(email);
+    res
+      .status(200)
+      .json({ success: true, message: "New OTP sent to email", data: null });
+  } catch (err) {
+    console.error("Resend OTP Error:", err);
+    res.status(500).json({ success: false, message: err.message, data: null });
   }
 };
 
 //--------login--------
 exports.login = async (req, res) => {
+  const { email, password } = req.body;
+
   try {
-    const { email, password } = req.body;
-
     const user = await User.findOne({ email });
-    if (!user)
-      return res
-        .status(400)
-        .json({ success: false, message: "User not Found" });
+    if (!user || !user.isVerified) {
+      return res.status(200).json({
+        success: false,
+        message: "Invalid credentials or email not verified",
+        data: null,
+      });
+    }
 
-    const passmatch = await bcrypt.compare(password, user.password);
-    if (!passmatch)
-      return res
-        .status(403)
-        .json({ success: false, message: "Invaild password or Email" });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(200).json({
+        success: false,
+        message: "Invalid email or password",
+        data: null,
+      });
+    }
 
-    //-----generate token
-    const token = await jwt.sign(
-      { email: user.email, role: user.role, id: user._id },
-      process.env.SECRET_KEY,
-      {
-        expiresIn: "1h",
-      }
-    );
+    const token = generateToken(user);
 
-    res.status(200).json({
-      success: true,
-      message: "Login Successfully",
-      token,
-      user: user._id,
+    console.log("✅ User logged in:", {
+      id: user._id,
       email: user.email,
       role: user.role,
     });
-  } catch (error) {
-    console.log("server error", error);
-    res.status(500).json({ success: false, message: "login failed" });
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: {
+        token,
+        user: {
+          id: user._id,
+          email: user.email,
+          role: user.role,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("❌ Login Error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", data: null });
   }
 };
 
 //--------- super admin get profile-------
 exports.getProfile = async (req, res) => {
   try {
-    const user = await User.find({ role: { $in: ["user", "admin"] } }).select(
+    const user = await User.find({ role: { $in: ["admin"] } }).select(
       "-password"
     );
-    if (!user) return res.status(400).json({ message: "User not Found" });
+    if (!user || user.length === 0) {
+      return res.status(200).json({
+        success: false,
+        message: "User not Found",
+        data: null,
+      });
+    }
 
-    res.status(200).json({ success: true, data: user });
+    res
+      .status(200)
+      .json({ success: true, message: "Profile fetched", data: user });
   } catch (error) {
     console.log("server error", error);
-    res.status(500).json({ success: false, message: "Failed to get profile" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get profile", data: null });
   }
 };
 
 //-------superadmin get by id------
-
 exports.getProfilebyId = async (req, res) => {
   try {
     const { id } = req.params;
 
     const user = await User.findById(id).select("-password");
-    if (!user) return res.status(400).json({ messgae: "user not found" });
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
 
-    res.status(200).json({ success: true, data: user });
+    res
+      .status(200)
+      .json({ success: true, message: "Profile fetched", data: user });
   } catch (error) {
     console.log("server error", error);
-    res.status(500).json({ message: "Failed to get profile" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get profile", data: null });
   }
 };
 
@@ -110,18 +187,26 @@ exports.updateprofile = async (req, res) => {
     const { email, role } = req.body;
 
     const user = await User.findById(id);
-    if (!user) return res.status(400).json({ message: "user not found" });
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
 
     if (email) user.email = email;
     if (role) user.role = role;
     await user.save();
 
-    res
-      .status(200)
-      .json({ success: true, message: "Updated successfully", data: { user } });
+    res.status(200).json({
+      success: true,
+      message: "Updated successfully",
+      data: user,
+    });
   } catch (error) {
     console.log("server error", error);
-    res.status(500).json({ message: "Failed to update" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update", data: null });
   }
 };
 
@@ -130,11 +215,110 @@ exports.deleteprofile = async (req, res) => {
   try {
     const { id } = req.params;
     const user = await User.findByIdAndDelete(id);
-    if (!user) return res.status(400).json({ message: "user not found" });
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
 
-    res.status(200).json({ success: false, message: "Deleted profile" });
+    res
+      .status(200)
+      .json({ success: true, message: "Deleted profile", data: null });
   } catch (error) {
     console.log("server error", error);
-    res.status(500).json({ messge: "Failed to Delete" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to Delete", data: null });
+  }
+};
+
+//--- admin get user--
+exports.admingetuser = async (req, res) => {
+  try {
+    const users = await User.find({ role: "user" }).select("-password");
+
+    res
+      .status(200)
+      .json({ success: true, message: "Users fetched", data: users });
+  } catch (error) {
+    console.log("server error", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get users", data: null });
+  }
+};
+
+//---- admingetuserbyid---
+exports.admingetuserbyid = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id).select("-password");
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
+
+    res
+      .status(200)
+      .json({ success: true, message: "User fetched", data: user });
+  } catch (error) {
+    console.log("server error", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to get user", data: null });
+  }
+};
+
+//---admin update user profile---
+exports.adminupdateuser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, role } = req.body;
+
+    const user = await User.findById(id);
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
+
+    if (email) user.email = email;
+    if (role) user.role = role;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Updated successfully",
+      data: user,
+    });
+  } catch (error) {
+    console.log("server error", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to update", data: null });
+  }
+};
+
+//---admin delete user--
+exports.admindeleteuser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findByIdAndDelete(id);
+    if (!user) {
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found", data: null });
+    }
+
+    res
+      .status(200)
+      .json({ success: true, message: "Deleted profile", data: null });
+  } catch (error) {
+    console.log("server error", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to Delete", data: null });
   }
 };

@@ -16,6 +16,19 @@ exports.addCategory = async (req, res) => {
   }
 };
 
+//-----------get all category-------
+exports.getallcategories = async (req, res) => {
+  try {
+    const categories = await Categories.find();
+    res.status(200).json({ success: true, data: categories });
+  } catch (error) {
+    console.error("server error", error);
+    res
+      .status(500)
+      .json({ success: true, message: "Failed to get categories" });
+  }
+};
+
 //-----------update category-------
 exports.updateCategory = async (req, res) => {
   try {

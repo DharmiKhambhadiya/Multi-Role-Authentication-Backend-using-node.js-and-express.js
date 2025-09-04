@@ -8,3 +8,4 @@ const pick = (object, key) => {
 };
 
 module.exports = pick;
+  
